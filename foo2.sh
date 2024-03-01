@@ -51,7 +51,7 @@ delete_series() {
         status_code=$(echo "$seriesResponse" | jq -r '.httpStatus')
 
         # Check if the response array is empty
-        if [[ $(echo "$seriesResponse" | jq '.response | length') -eq 0 ]]; then
+        if [ $(echo "$seriesResponse" | jq '.response | length') -eq 0 ]; then
             echo "No seasons found for series ID: $SERIES_ID" | tee -a "$LOG_FILE"
             # Call delete_associated_images when no seasons are found
             delete_associated_images "$SERIES_ID" "$LOG_FILE" "$JSESSIONID"
@@ -75,19 +75,22 @@ delete_series() {
 
             # Prompt the user to enter the season number they want to delete or "All" to delete all seasons
             read -p "Enter the season number you want to delete (or 'All' to delete all seasons): " season_number
-            if [ "$season_number" == "All" ]; then
+            if  [ "$season_number" == "All" ]; then
+
                 # Delete all seasons
                 for season_id in $SereisSeasonIDs; do
-                    list_episodes "$season_id" "$LOG_FILE" "$JSESSIONID"
+                    listEpisodes_imageDeletion "$season_id" "$LOG_FILE" "$JSESSIONID"
                     delete_episodes "$season_id" "$LOG_FILE" "$JSESSIONID" "$RESPONSE_FILE"
                     delete_season "$season_id" "$LOG_FILE" "$JSESSIONID" "$RESPONSE_FILE"
                 done
                 echo "All seasons deleted for series ID: $SERIES_ID" | tee -a "$LOG_FILE"
+
                 # Check if there are any remaining seasons after deletion
                 remaining_seasons_response=$(curl -k -X GET -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$SERIESID/$SERIES_ID")
                 remaining_seasons_count=$(echo "$remaining_seasons_response" | jq -r '.response | length')
                 if [ "$remaining_seasons_count" -eq 0 ]; then
                     echo "No remaining seasons found for series ID: $SERIES_ID. Proceeding to delete the series." | tee -a "$LOG_FILE"
+                    echo "" | tee -a "$LOG_FILE"
                     # Call delete_associated_images when no seasons are found
                     delete_associated_images "$SERIES_ID" "$LOG_FILE" "$JSESSIONID"
                     # Delete the series ID if no seasons are found
@@ -97,13 +100,16 @@ delete_series() {
                 # Find the season ID corresponding to the entered season number
                 selected_season_id=$(echo "$seriesResponse" | jq -r --arg season_number "$season_number" '.response[] | select(.seasonNumber == $season_number) | .id')
                 echo "You Entered:"$season_number "Deleting the "$selected_season_id 
+
+                echo $selected_season_id
                 # Check if the selected season ID is empty (invalid season number)
-                if [ -z "$selected_season_id" ]; then
+                if  [[ -z "$selected_season_id" ]]; then
+                
                     echo "Invalid season number. No season found for the entered number." | tee -a "$LOG_FILE"
                     exit 1
                 fi
-                # List episodes before deleting
-                list_episodes "$selected_season_id" "$LOG_FILE" "$JSESSIONID"
+                # List episodes and deleting the associated images
+                listEpisodes_imageDeletion "$selected_season_id" "$LOG_FILE" "$JSESSIONID"
                 # Delete the episodes associated with the selected season
                 delete_episodes "$selected_season_id" "$LOG_FILE" "$JSESSIONID" "$RESPONSE_FILE"
                 # Delete the selected season ID after deleting episodes
@@ -115,24 +121,57 @@ delete_series() {
     fi
 }
 
-# Function to list episodes associated with a season
-list_episodes() {
+# Function to list episodes associated with a season and deleting its associated images
+listEpisodes_imageDeletion() {
     local SEASON_ID="$1"
     local LOG_FILE="$2"
     local JSESSIONID="$3"
-    
+
     # Retrieve episodes associated with the season
     seasonDetailsResponse=$(curl -k -X GET -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$SEASONID/$SEASON_ID")
-    echo $seasonDetailsResponse
+
     # Check if the response is valid JSON
     if jq -e . >/dev/null 2>&1 <<<"$seasonDetailsResponse"; then
-        # Extract episode IDs and titles
+        # Extract episode IDs, titles, and images
         episodeDetails=$(echo "$seasonDetailsResponse" | jq -r '.response[]')
-        
+
         # Print episode details
         echo "Episodes associated with the Season : $SEASON_ID" | tee -a "$LOG_FILE"
-        echo "$episodeDetails" | tee -a "$LOG_FILE"
-        echo "" | tee -a "$LOG_FILE"
+        echo "$episodeDetails" | while IFS= read -r line; do
+              episode_id="$line"  # Directly use the current line as episode_id
+
+            # Retrieve episode images
+            episodeImagesResponse=$(curl -k -X GET -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$EPISODEID_IMAGE_LIST/$episode_id")
+
+            # Check if the response is valid JSON
+            if jq -e . >/dev/null 2>&1 <<<"$episodeImagesResponse"; then
+                # Check if there are images available for the episode
+                if [ "$(echo "$episodeImagesResponse" | jq -r '.response.imageList | length')" -eq 0 ]; then
+                    echo "No images found for Episode ID: $episode_id" | tee -a "$LOG_FILE"
+                else
+                    episode_image_ids=$(echo "$episodeImagesResponse" | jq -r '.response.imageList[].id')
+                    
+                    # Splitting image IDs into an array
+                    IFS=$'\n' read -rd '' -a image_ids_array <<<"$episode_image_ids"
+                    
+                    # Print episode ID
+                    echo "Episode ID: $episode_id" | tee -a "$LOG_FILE"
+                    
+                    # Print image IDs in order
+                    for image_id in "${image_ids_array[@]}"; do
+                        echo "Image ID: $image_id" | tee -a "$LOG_FILE"
+                        
+                        # Delete the image ID
+                        episodeImageDelete=$(curl -k -X DELETE -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$EPISODEID_IMAGE_DELETE/$image_id")
+                        echo "Deleting Image ID: $image_id" | tee -a "$LOG_FILE"
+                    done
+                fi
+                echo "" | tee -a "$LOG_FILE"
+
+            else
+                echo "Failed to parse JSON response for episode images for episode ID: $episode_id" | tee -a "$LOG_FILE"
+            fi
+        done
     else
         echo "Failed to parse JSON response for season ID: $SEASON_ID" | tee -a "$LOG_FILE"
     fi
@@ -301,6 +340,8 @@ SERIESID="$SERVERURL/rest/season/search/"
 SEASONID="$SERVERURL/rest/season/list-episodes/"
 EPISODEID_DELETE_URL="$SERVERURL/rest/asset/delete"
 SEASONID_DELETE_URL="$SERVERURL/rest/season/delete/"
+EPISODEID_IMAGE_LIST="$SERVERURL/rest/multipleimages/ASSET/"
+EPISODEID_IMAGE_DELETE="$SERVERURL/rest/multipleimages/delete/"
 SERIESID_IMAGES="$SERVERURL/rest/multipleimages/VOD_SERIES/"
 SERIESID_IMAGES_DELETE="$SERVERURL/rest/multipleimages/delete/"
 SERIESID_DELETE_URL="$SERVERURL/rest/series/delete/"

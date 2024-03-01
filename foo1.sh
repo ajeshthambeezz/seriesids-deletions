@@ -52,6 +52,8 @@ delete_series() {
                         
             # List episodes before deleting
             list_episodes "$selected_season_id" "$LOG_FILE" "$JSESSIONID"
+
+            delete_episode_associated_images "$EPISODE_ID" "$LOG_FILE" "$JSESSIONID"
             
             # Delete the episodes associated with the selected season
             delete_episodes "$selected_season_id" "$LOG_FILE" "$JSESSIONID" "$RESPONSE_FILE"
@@ -64,76 +66,115 @@ delete_series() {
     fi
 }
 
-# Function to list episodes associated with a season
+
 list_episodes() {
     local SEASON_ID="$1"
     local LOG_FILE="$2"
     local JSESSIONID="$3"
-    
+
     # Retrieve episodes associated with the season
     seasonDetailsResponse=$(curl -k -X GET -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$SEASONID/$SEASON_ID")
 
     # Check if the response is valid JSON
     if jq -e . >/dev/null 2>&1 <<<"$seasonDetailsResponse"; then
-        # Extract episode IDs and titles
+        # Extract episode IDs, titles, and images
         episodeDetails=$(echo "$seasonDetailsResponse" | jq -r '.response[]')
-        
+
         # Print episode details
         echo "Episodes associated with the Season : $SEASON_ID" | tee -a "$LOG_FILE"
-        echo "$episodeDetails" | tee -a "$LOG_FILE"
-        echo "" | tee -a "$LOG_FILE"
+        echo "$episodeDetails" | while IFS= read -r line; do
+              episode_id="$line"  # Directly use the current line as episode_id
+
+            # Retrieve episode images
+            episodeImagesResponse=$(curl -k -X GET -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$EPISODEID_IMAGE_LIST/$episode_id")
+
+            # Check if the response is valid JSON
+            if jq -e . >/dev/null 2>&1 <<<"$episodeImagesResponse"; then
+                # Check if there are images available for the episode
+                if [ "$(echo "$episodeImagesResponse" | jq '.response.imageList | length')" -eq 0 ]; then
+                    echo "No images found for Episode ID: $episode_id" | tee -a "$LOG_FILE"
+                else
+                    episode_image_ids=$(echo "$episodeImagesResponse" | jq -r '.response.imageList[].id')
+                    
+                    # Splitting image IDs into an array
+                    IFS=$'\n' read -rd '' -a image_ids_array <<<"$episode_image_ids"
+                    
+                    # Print episode ID
+                    echo "Episode ID: $episode_id" | tee -a "$LOG_FILE"
+                    
+                    # Print image IDs in order
+                    for image_id in "${image_ids_array[@]}"; do
+                        echo "Image ID: $image_id" | tee -a "$LOG_FILE"
+                        
+                        # Delete the image ID
+                        episodeImageDelete=$(curl -k -X DELETE -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$EPISODEID_IMAGE_DELETE/$image_id")
+                        echo "Deleting Image ID: $image_id" | tee -a "$LOG_FILE"
+                    done
+                fi
+                echo "" | tee -a "$LOG_FILE"
+            else
+                echo "Failed to parse JSON response for episode images for episode ID: $episode_id" | tee -a "$LOG_FILE"
+            fi
+        done
     else
         echo "Failed to parse JSON response for season ID: $SEASON_ID" | tee -a "$LOG_FILE"
     fi
 }
 
-# Function to delete associated images for an episode
-delete_episode_associated_images() {
-    local EPISODE_ID="$1"
-    local LOG_FILE="$2"
-    local JSESSIONID="$3"
+
+
+
+
+
+
+
+# # Function to delete associated images for an episode
+# delete_episode_associated_images() {
+#     local EPISODE_ID="$1"
+#     local LOG_FILE="$2"
+#     local JSESSIONID="$3"
     
-    # After deleting episodes, check for associated images and delete them
-    episodeImagesResponse=$(curl -k -X GET -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$EPISODEID_IMAGE_LIST/$EPISODE_ID")
-    echo $episodeImagesResponse
-    # Check if the response is valid JSON
-    if jq -e . >/dev/null 2>&1 <<<"$episodeImagesResponse"; then
+#     # After deleting episodes, check for associated images and delete them
+#     episodeImagesResponse=$(curl -k -X GET -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$EPISODEID_IMAGE_LIST/$EPISODE_ID")
+#     echo $episodeImagesResponse
+#     # Check if the response is valid JSON
+#     if jq -e . >/dev/null 2>&1 <<<"$episodeImagesResponse"; then
 
-        # Extract the values from the JSON response
-        status_code=$(echo "$episodeImagesResponse" | jq -r '.httpStatus')
+#         # Extract the values from the JSON response
+#         status_code=$(echo "$episodeImagesResponse" | jq -r '.httpStatus')
 
-        # Check if the response array is empty
-        if [[ $(echo "$episodeImagesResponse" | jq '.response.imageList | length') -eq 0 ]]; then
-            echo "No images found for episode ID: $EPISODE_ID" | tee -a "$LOG_FILE"
-        else
-            # Loop through each retrieved image and delete it
-            for image_id in $(echo "$episodeImagesResponse" | jq -r '.response.imageList[].id'); do
-                echo $image_id
-                deleteEpisodeImage=$(curl -k -X DELETE -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$EPISODEID_IMAGE_DELETE/$image_id")
-                if jq -e . >/dev/null 2>&1 <<<"$deleteEpisodeImage"; then
+#         # Check if the response array is empty
+#         if [[ $(echo "$episodeImagesResponse" | jq '.response.imageList | length') -eq 0 ]]; then
+#             echo "No images found for episode ID: $EPISODE_ID" | tee -a "$LOG_FILE"
+#         else
+#             # Loop through each retrieved image and delete it
+#             for image_id in $(echo "$episodeImagesResponse" | jq -r '.response.imageList[].id'); do
+#                 echo $image_id
+#                 deleteEpisodeImage=$(curl -k -X DELETE -s /dev/null -H "Content-Type: application/json" -b "$JSESSIONID" "$EPISODEID_IMAGE_DELETE/$image_id")
+#                 if jq -e . >/dev/null 2>&1 <<<"$deleteEpisodeImage"; then
 
-                    # Extract the values from the JSON response
-                    status_code=$(echo "$deleteEpisodeImage" | jq -r '.statusCode')
-                    error_message=$(echo "$deleteEpisodeImage" | jq -r '.errorMessage')
-                    statusMessage=$(echo "$deleteEpisodeImage" | jq -r '.statusMessage')
+#                     # Extract the values from the JSON response
+#                     status_code=$(echo "$deleteEpisodeImage" | jq -r '.statusCode')
+#                     error_message=$(echo "$deleteEpisodeImage" | jq -r '.errorMessage')
+#                     statusMessage=$(echo "$deleteEpisodeImage" | jq -r '.statusMessage')
 
-                    # Check the status code to determine success or failure
-                    if [ "$status_code" == "1" ]; then
-                        echo "Failed to delete image $image_id. Error message: $error_message" | tee -a "$LOG_FILE"
-                    elif [ "$status_code" == "0" ]; then
-                        echo "Status message: $statusMessage" | tee -a "$LOG_FILE"
-                    else
-                        echo "Failed to delete image $image_id. Unknown status code: $status_code" | tee -a "$LOG_FILE"
-                    fi
-                else
-                    echo "Failed to parse JSON response for image $image_id deletion: $deleteEpisodeImage" | tee -a "$LOG_FILE"
-                fi
-            done
-        fi
-    else
-        echo "Failed to parse JSON response for images associated with episode ID $EPISODE_ID" | tee -a "$LOG_FILE"
-    fi  
-}
+#                     # Check the status code to determine success or failure
+#                     if [ "$status_code" == "1" ]; then
+#                         echo "Failed to delete image $image_id. Error message: $error_message" | tee -a "$LOG_FILE"
+#                     elif [ "$status_code" == "0" ]; then
+#                         echo "Status message: $statusMessage" | tee -a "$LOG_FILE"
+#                     else
+#                         echo "Failed to delete image $image_id. Unknown status code: $status_code" | tee -a "$LOG_FILE"
+#                     fi
+#                 else
+#                     echo "Failed to parse JSON response for image $image_id deletion: $deleteEpisodeImage" | tee -a "$LOG_FILE"
+#                 fi
+#             done
+#         fi
+#     else
+#         echo "Failed to parse JSON response for images associated with episode ID $EPISODE_ID" | tee -a "$LOG_FILE"
+#     fi  
+# }
 
 
 # # Function to delete episodes associated with a season
