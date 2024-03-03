@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Function to handle deletion of series
-delete_series() {
+delete_all_seriesIds() {
     local SERIES_ID="$1"
     local LOG_FILE="$2"
     local JSESSIONID="$3"
@@ -21,7 +21,6 @@ delete_series() {
             # Echo asset ID and requested ID before outputting the status message
             echo "Seasons listed successfully for series ID: $SERIES_ID :: $status_code" | tee -a "$LOG_FILE"
 
-            # Rest of your script logic for deleting seasons, episodes, and images
             # Loop through each retrieved Season ID and its corresponding extId and Details them together
             i=0
             for season_id in $(echo "$seasonResponse" | jq -r '.response[].id'); do
@@ -222,8 +221,8 @@ if [ -f "$1" ]; then
             exit 1
         fi
 
-        # Call delete_series function for each series ID
-        delete_series "$SERIES_ID" "$LOG_FILE" "$JSESSIONID"
+        # Call delete_all_seriesIds function for each series ID
+        delete_all_seriesIds "$SERIES_ID" "$LOG_FILE" "$JSESSIONID"
     done < "$1"
 else
     # If the argument is a single series ID, directly delete it
@@ -249,8 +248,8 @@ else
         exit 1
     fi
 
-    # Call delete_series function for the single series ID
-    delete_series "$SERIES_ID" "$LOG_FILE" "$JSESSIONID"
+    # Call delete_all_seriesIds function for the single series ID
+    delete_all_seriesIds "$SERIES_ID" "$LOG_FILE" "$JSESSIONID"
 fi
 
 #Author Ajesh ThambeeZzz....
